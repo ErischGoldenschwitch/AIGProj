@@ -1,0 +1,217 @@
+import webrtcvad
+import collections
+import sys
+import signal
+import pyaudio
+
+from array import array
+from struct import pack
+import wave
+import time
+from subprocess import Popen, PIPE
+from chatterbot import ChatBot as naturalLanguageThread
+import os
+
+
+
+class initialization:
+    def __init__(self):
+        self.name = 'test'
+        self.FORMAT = pyaudio.paInt16
+        self.CHANNELS = 1
+        self.RATE = 16000
+        self.CHUNK_DURATION_MS = 30       # supports 10, 20 and 30 (ms)
+        self.PADDING_DURATION_MS = 1500   # 1 sec jugement
+        self.CHUNK_SIZE = int(self.RATE * self.CHUNK_DURATION_MS / 1000)  # chunk to read
+        self.CHUNK_BYTES = self.CHUNK_SIZE * 2  # 16bit = 2 bytes, PCM
+        self.NUM_PADDING_CHUNKS = int(self.PADDING_DURATION_MS / self.CHUNK_DURATION_MS)
+        # NUM_WINDOW_CHUNKS = int(240 / CHUNK_DURATION_MS)
+        self.NUM_WINDOW_CHUNKS = int(1200 / self.CHUNK_DURATION_MS)  # 400 ms/ 30ms  ge
+        self.NUM_WINDOW_CHUNKS_END = self.NUM_WINDOW_CHUNKS * 2
+
+        self.START_OFFSET = int(self.NUM_WINDOW_CHUNKS * self.CHUNK_DURATION_MS * 0.5 * self.RATE)
+
+        self.vad = webrtcvad.Vad(1)
+
+        self.pa = pyaudio.PyAudio()
+        self.stream = self.pa.open(format=self.FORMAT,
+                         channels=self.CHANNELS,
+                         rate=self.RATE,
+                         input=True,
+                         start=False,
+                         # input_device_index=2,
+                         frames_per_buffer=self.CHUNK_SIZE)
+
+
+        self.got_a_sentence = False
+        self.leave = False
+#-----Init children
+initialization = initialization()
+#-----------------------------------
+
+
+#------Said sentence contexts
+class responseContextAlogs:
+    def __init__(self, namePrecursorThread):
+        self.responseThread = naturalLanguageThread(
+            namePrecursorThread,
+            trainer='chatterbot.trainers.ChatterBotCorpusTrainer'
+        )
+        self.responseThread.train("chatterbot.corpus.english.conversations")
+
+    def killTasks():
+        sys.exit(0)
+#responseCChild
+responseContextAlogs = responseContextAlogs("BotThread")
+#--------------------------------
+
+
+class backEndTasks:
+    @staticmethod
+    def handle_int(sig, chunk):
+        global leave, got_a_sentence
+        initialization.leave = True
+        initialization.got_a_sentence = True
+
+    #Probabilistic voice processing command yield
+    @staticmethod
+    def commandYield(command):
+        process = Popen(command, stdout=PIPE, shell=True)
+        while True:
+            line = process.stdout.readline().rstrip()
+            if not line:
+                break
+            yield line
+
+    @staticmethod
+    def record_to_file(path, data, sample_width):
+        "Records from the microphone and outputs the resulting data to 'path'"
+        data = pack('<' + ('h' * len(data)), *data)
+        wf = wave.open(path, 'wb')
+        wf.setnchannels(1)
+        wf.setsampwidth(sample_width)
+        wf.setframerate(initialization.RATE)
+        wf.writeframes(data)
+        wf.close()
+
+    @staticmethod
+    def normalize(snd_data):
+        "Average the volume out"
+        MAXIMUM = 32767  # 16384
+        times = float(MAXIMUM) / max(abs(i) for i in snd_data)
+        r = array('h')
+        for i in snd_data:
+            r.append(int(i * times))
+        return r
+
+#--backendChild
+backEndTasks = backEndTasks()
+signal.signal(signal.SIGINT, backEndTasks.handle_int)
+#========================================================================================
+
+
+
+def listen(got_a_sentence, leave):
+    initialization.got_a_sentence = got_a_sentence
+    initialization.leave = leave
+    #---
+    while not initialization.leave:
+        #Break the process
+        signal.signal(signal.SIGINT, responseContextAlogs.killTasks) 
+        #-----------------
+        
+        ring_buffer = collections.deque(maxlen=initialization.NUM_PADDING_CHUNKS)
+        triggered = False
+        voiced_frames = []
+        ring_buffer_flags = [0] * initialization.NUM_WINDOW_CHUNKS
+        ring_buffer_index = 0
+
+        ring_buffer_flags_end = [0] * initialization.NUM_WINDOW_CHUNKS_END
+        ring_buffer_index_end = 0
+        buffer_in = ''
+        # WangS
+        raw_data = array('h')
+        index = 0
+        start_point = 0
+        StartTime = time.time()
+        print("\n* You can speak now ")
+        initialization.stream.start_stream()
+
+        while not initialization.got_a_sentence and not initialization.leave:
+            chunk = initialization.stream.read(initialization.CHUNK_SIZE)
+            # add WangS
+            raw_data.extend(array('h', chunk))
+            index += initialization.CHUNK_SIZE
+            TimeUse = time.time() - StartTime
+
+            active = initialization.vad.is_speech(chunk, initialization.RATE)
+
+            sys.stdout.write('0' if active else '_')
+            ring_buffer_flags[ring_buffer_index] = 1 if active else 0
+            ring_buffer_index += 1
+            ring_buffer_index %= initialization.NUM_WINDOW_CHUNKS
+
+            ring_buffer_flags_end[ring_buffer_index_end] = 1 if active else 0
+            ring_buffer_index_end += 1
+            ring_buffer_index_end %= initialization.NUM_WINDOW_CHUNKS_END
+
+            # start point detection
+            if not triggered:
+                ring_buffer.append(chunk)
+                num_voiced = sum(ring_buffer_flags)
+                if num_voiced > 0.25 * initialization.NUM_WINDOW_CHUNKS:
+                    sys.stdout.write(' Open ')
+                    triggered = True
+                    start_point = index - initialization.CHUNK_SIZE * 20  # start point
+                    # voiced_frames.extend(ring_buffer)
+                    ring_buffer.clear()
+            # end point detection
+            else:
+                #__WAITING__VAR1 = time.time()
+                # voiced_frames.append(chunk)
+                ring_buffer.append(chunk)
+                num_unvoiced = initialization.NUM_WINDOW_CHUNKS_END - sum(ring_buffer_flags_end)
+                if num_unvoiced > 0.95 * initialization.NUM_WINDOW_CHUNKS_END or TimeUse > 80:
+                    sys.stdout.write(' Close ')
+                    triggered = False
+                    initialization.got_a_sentence = True
+
+            sys.stdout.flush()
+
+
+
+        sys.stdout.write('\n')
+
+        initialization.stream.stop_stream()
+        print("* Thinking")
+        initialization.got_a_sentence = False
+
+        # write to file
+        raw_data.reverse()
+        for index in range(start_point):
+            raw_data.pop()
+        raw_data.reverse()
+        raw_data = backEndTasks.normalize(raw_data)
+        #----
+        speech_path = 'ProcessingDir/speech_' + str(round(time.time())) + '.wav'
+        backEndTasks.record_to_file(speech_path, raw_data, 2)
+        initialization.leave = True
+
+        os.system('clear')
+
+        #---Voice probabilistics processing - voice to text
+        for path in backEndTasks.commandYield("DeepSpeech/native_client/bin/deepspeech DeepSpeech/native_client/models/output_graph.pb " + speech_path + " DeepSpeech/native_client/models/alphabet.txt"):
+            spoken_data = str(path.decode('utf-8'))
+
+            #Clear speech datas
+            os.system('rm ' + speech_path)
+
+            #----directions
+            response = responseContextAlogs.responseThread.get_response(spoken_data)
+            print('\nEnglish -> Oshiwambo processing : {}\n\n'.format(response))
+            responseFile = str(response) + '.mp3';
+            os.system('play -q ProcessingDir/oshiAudio/' + responseFile); 
+
+        os.system('rm db.sqlite3');
+
+listen(False, False)
