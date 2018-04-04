@@ -1,0 +1,43 @@
+categories:
+- englishProto
+conversations:
+- - come home
+  - '[COME-HOME]'
+- - What are you doing
+  - '[WHAT-ARE-YOU-DOING]'
+- - Where are you going
+  - '[WHERE-ARE-YOU-GOING]'
+- - Sleep
+  - '[SLEEP]'
+- - Go to school
+  - '[GO-TO-SCHOOL]'
+- - Good night
+  - '[GOOD-NIGHT]'
+- - Good morning
+  - '[GOOD-MORNING]'
+- - Where do you school
+  - '[WHERE-DO-YOU-SCHOOL]'
+- - Go to sleep
+  - '[GO-TO-SLEEP]'
+- - Help me
+  - '[HELP-ME]'
+- - Switch off the lights
+  - '[SWITCH-OFF-THE-LIGHTS]'
+- - Switch on the lights
+  - '[SWITCH-ON-THE-LIGHTS]'
+- - Where is my food
+  - '[WHERE-IS-MY-FOOD]'
+- - What time are you coming home
+  - '[WHAT-TIME-ARE-YOU-COMING-HOME]'
+- - Go to church
+  - '[GO-TO-CHURCH]'
+- - Follow me
+  - '[FOLLOW-ME]'
+- - Where is your mother
+  - '[WHERE-IS-YOUR-MOTHER]'
+- - How old are you
+  - '[HOW-OLD-ARE-YOU]'
+- - Call me
+  - '[CALL-ME]'
+- - Send me money
+  - '[SEND-ME-MONEY]'
